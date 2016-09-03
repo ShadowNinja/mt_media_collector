@@ -1,0 +1,9 @@
+[package]
+name = "mt_media_collector"
+version = "0.1.0"
+authors = ["ShadowNinja <shadowninja@minetest.net>"]
+
+[dependencies]
+sha1 = "*"
+rust-ini = "*"
+getopts = "*"
