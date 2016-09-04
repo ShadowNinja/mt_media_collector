@@ -77,8 +77,10 @@ fn search_media_dir(ms: &mut MediaSet, path: &Path) -> io::Result<()>
 {
 	for entry in try!(path.read_dir()) {
 		let pb = try!(entry).path();
-		let h = try!(hash_file(pb.as_path()));
-		ms.push(Asset::new(pb, h));
+		if pb.is_file() {
+			let h = try!(hash_file(pb.as_path()));
+			ms.push(Asset::new(pb, h));
+		}
 	}
 	Ok(())
 }
