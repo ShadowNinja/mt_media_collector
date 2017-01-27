@@ -1,12 +1,13 @@
-extern crate sha1;
-extern crate ini;
 extern crate getopts;
+extern crate ini;
+extern crate sha1;
 
-use std::path::{Path, PathBuf};
+use std::env;
 use std::fs::{self, File};
 use std::io::{self, Read, Write, BufWriter};
 use std::iter::FromIterator;
-use std::env;
+use std::path::{Path, PathBuf};
+
 use ini::Ini;
 use ini::ini::Error as IniError;
 
@@ -23,7 +24,10 @@ struct Asset {
 
 impl Asset {
 	pub fn new(pb: PathBuf, h: Sha1DigestBytes) -> Self {
-		Asset { path: pb, hash: h }
+		Asset {
+			path: pb,
+			hash: h,
+		}
 	}
 }
 
@@ -34,11 +38,15 @@ impl PartialEq for Asset {
 }
 
 
-enum AssetCopyMode {Symlink, Hardlink, Copy, None}
+enum AssetCopyMode {
+	Symlink,
+	Hardlink,
+	Copy,
+	None,
+}
 
 
-fn to_hex(input: &[u8]) -> String
-{
+fn to_hex(input: &[u8]) -> String {
 	String::from_iter(input.iter().map(|b| format!("{:02x}", b)))
 }
 
@@ -49,14 +57,15 @@ fn make_absolute(path: &Path) -> PathBuf {
 	} else {
 		std::env::current_dir()
 			.and_then(|cd| Ok(cd.join(path)))
-			.or_else(|_err| { let x: io::Result<_> = Ok(path.to_path_buf()); x })
+			.or_else(|_err| -> io::Result<_> {
+				Ok(path.to_path_buf())
+			})
 			.unwrap()
 	}
 }
 
 
-fn hash_file(path: &Path) -> io::Result<Sha1DigestBytes>
-{
+fn hash_file(path: &Path) -> io::Result<Sha1DigestBytes> {
 	let mut buf = [0u8; 8192];
 	let mut hash = sha1::Sha1::new();
 	let mut file = File::open(&path)?;
@@ -64,15 +73,14 @@ fn hash_file(path: &Path) -> io::Result<Sha1DigestBytes>
 		match file.read(&mut buf) {
 			Ok(0) => break,
 			Ok(len) => hash.update(&buf[..len]),
-			Err(e) => return Err(e)
+			Err(e) => return Err(e),
 		}
 	}
 	Ok(hash.digest().bytes())
 }
 
 
-fn search_media_dir(ms: &mut MediaSet, path: &Path) -> io::Result<()>
-{
+fn search_media_dir(ms: &mut MediaSet, path: &Path) -> io::Result<()> {
 	for entry in path.read_dir()? {
 		let pb = entry?.path();
 		if pb.is_file() {
@@ -84,8 +92,7 @@ fn search_media_dir(ms: &mut MediaSet, path: &Path) -> io::Result<()>
 }
 
 
-fn search_mod_dir(ms: &mut MediaSet, path: &Path) -> io::Result<()>
-{
+fn search_mod_dir(ms: &mut MediaSet, path: &Path) -> io::Result<()> {
 	static MEDIA_DIRS: &'static [&'static str] = &["textures", "models", "sounds"];
 	for media_dir in MEDIA_DIRS {
 		let media_pb = path.join(media_dir);
@@ -97,23 +104,25 @@ fn search_mod_dir(ms: &mut MediaSet, path: &Path) -> io::Result<()>
 }
 
 
-fn search_modpack_dir(ms: &mut MediaSet, path: &Path, mods: Option<&ModList>) -> io::Result<()>
-{
+fn search_modpack_dir(ms: &mut MediaSet, path: &Path, mods: Option<&ModList>) -> io::Result<()> {
 	for entry in path.read_dir()? {
-		let p = entry?.path();
-		if !p.is_dir() {
+		let entry_path = entry?.path();
+		if !entry_path.is_dir() {
 			continue;
-		} else if p.join("modpack.txt").exists() {
-			search_modpack_dir(ms, p.as_path(), mods)?;
-		} else if p.join("init.lua").exists() {
-			if let Some(list) = mods {
-				if !list.contains(&p.file_name().expect("Modpack directory has no file name!")
-						.to_str().expect("Modpack directory is not valid Unicode")
-						.to_string()) {
+		} else if entry_path.join("modpack.txt").exists() {
+			search_modpack_dir(ms, entry_path.as_path(), mods)?;
+		} else if entry_path.join("init.lua").exists() {
+			if let Some(mod_list) = mods {
+				let mod_name = &entry_path.file_name()
+					.expect("Mod directory has no name!")
+					.to_str()
+					.expect("Mod directory name is not valid Unicode")
+					.to_string();
+				if !mod_list.contains(mod_name) {
 					continue;
 				}
 			}
-			search_mod_dir(ms, p.as_path())?;
+			search_mod_dir(ms, entry_path.as_path())?;
 		}
 		// Otherwise it's probably a VCS directory or something similar
 	}
@@ -121,8 +130,7 @@ fn search_modpack_dir(ms: &mut MediaSet, path: &Path, mods: Option<&ModList>) ->
 }
 
 
-fn write_index(ms: &MediaSet, path: &Path) -> io::Result<()>
-{
+fn write_index(ms: &MediaSet, path: &Path) -> io::Result<()> {
 	let file = File::create(&path)?;
 	let mut writer = BufWriter::new(file);
 	writer.write_all(b"MTHS\x00\x01")?;
@@ -133,8 +141,7 @@ fn write_index(ms: &MediaSet, path: &Path) -> io::Result<()>
 }
 
 
-fn copy_assets(ms: &MediaSet, path: &Path, mode: AssetCopyMode) -> io::Result<()>
-{
+fn copy_assets(ms: &MediaSet, path: &Path, mode: AssetCopyMode) -> io::Result<()> {
 	fn copy_no_result<P: AsRef<Path>, Q: AsRef<Path>>(src: P, dst: Q) -> io::Result<()> {
 		fs::copy(src, dst).map(|_| ())
 	}
@@ -152,14 +159,14 @@ fn copy_assets(ms: &MediaSet, path: &Path, mode: AssetCopyMode) -> io::Result<()
 	#[cfg(not(any(unix, windows)))]
 	fn symlink_file<P: AsRef<Path>, Q: AsRef<Path>>(src: P, dst: Q) -> io::Result<()> {
 		Err(io::Error::new(io::ErrorKind::Other,
-			"Symlinking not supported on this platform!"))
+				"Symlinking not supported on this platform!"))
 	}
 
 	let copy_func = match mode {
 		AssetCopyMode::Symlink => symlink_file,
 		AssetCopyMode::Hardlink => fs::hard_link,
 		AssetCopyMode::Copy => copy_no_result,
-		AssetCopyMode::None => return Ok(())
+		AssetCopyMode::None => return Ok(()),
 	};
 
 	for asset in ms {
@@ -169,8 +176,7 @@ fn copy_assets(ms: &MediaSet, path: &Path, mode: AssetCopyMode) -> io::Result<()
 }
 
 
-fn get_mod_list(path: &Path) -> Result<ModList, IniError>
-{
+fn get_mod_list(path: &Path) -> Result<ModList, IniError> {
 	let world_mt = Ini::load_from_file(path.join("world.mt"))?;
 	let main_sec = world_mt.general_section();
 
@@ -186,23 +192,26 @@ fn get_mod_list(path: &Path) -> Result<ModList, IniError>
 }
 
 
-fn handle_args() -> Option<getopts::Matches>
-{
+fn handle_args() -> Option<getopts::Matches> {
 	let mut args = env::args();
 	let cmd_name = args.next()
-		.and_then(|opt| Path::new(&opt).file_name()
-			.and_then(|os_fn| os_fn.to_str())
-			.and_then(|s| Some(s.to_string()))
-		).unwrap_or(env!("CARGO_PKG_NAME").to_string());
+		.and_then(|opt| {
+			Path::new(&opt)
+				.file_name()
+				.and_then(|os_fn| os_fn.to_str())
+				.and_then(|s| Some(s.to_string()))
+		})
+		.unwrap_or(env!("CARGO_PKG_NAME").to_string());
 
 	let mut opts = getopts::Options::new();
 	opts.optflag("h", "help", "Print this help menu.");
 	opts.reqopt("o", "out", "Path to the output directory.", "PATH");
 	opts.reqopt("w", "world", "Path to the world directory.", "PATH");
 	opts.reqopt("g", "game", "Path to the game directory.", "PATH");
-	opts.optflagopt("c", "copy", "Copy assets to folder. \
-		Takes optional copy method: one of 'symlink', 'hardlink', \
-			'copy' (default)", "METHOD");
+	opts.optflagopt("c", "copy",
+			"Copy assets to folder. Takes optional copy method: \
+				one of 'symlink', 'hardlink', 'copy' (default)",
+			"METHOD");
 
 	let usage = || {
 		opts.usage(&format!("{} [mod paths]\n\n\
@@ -244,7 +253,7 @@ fn int_main() -> i32 {
 
 	let args = match handle_args() {
 		Some(a) => a,
-		None => return 1
+		None => return 1,
 	};
 
 	let out_opt = args.opt_str("out").unwrap();
@@ -290,7 +299,7 @@ fn int_main() -> i32 {
 	// Search game mods.
 	// Note: Game mods can not currently be disabled.
 	handle_result!(search_modpack_dir(&mut ms, game_path.join("mods").as_path(), None),
-				"Error searching game mods: {}");
+			"Error searching game mods: {}");
 
 	for mod_path in args.free {
 		handle_result!(search_modpack_dir(&mut ms, Path::new(&mod_path), Some(&mods)),
