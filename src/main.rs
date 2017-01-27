@@ -61,7 +61,7 @@ fn hash_file(path: &Path) -> io::Result<Sha1DigestBytes>
 {
 	let mut buf = [0u8; 8192];
 	let mut hash = sha1::Sha1::new();
-	let mut file = try!(File::open(&path));
+	let mut file = File::open(&path)?;
 	loop {
 		match file.read(&mut buf) {
 			Ok(0) => break,
@@ -75,10 +75,10 @@ fn hash_file(path: &Path) -> io::Result<Sha1DigestBytes>
 
 fn search_media_dir(ms: &mut MediaSet, path: &Path) -> io::Result<()>
 {
-	for entry in try!(path.read_dir()) {
-		let pb = try!(entry).path();
+	for entry in path.read_dir()? {
+		let pb = entry?.path();
 		if pb.is_file() {
-			let h = try!(hash_file(pb.as_path()));
+			let h = hash_file(pb.as_path())?;
 			ms.push(Asset::new(pb, h));
 		}
 	}
@@ -92,7 +92,7 @@ fn search_mod_dir(ms: &mut MediaSet, path: &Path) -> io::Result<()>
 	for media_dir in MEDIA_DIRS {
 		let media_pb = path.join(media_dir);
 		if media_pb.is_dir() {
-			try!(search_media_dir(ms, media_pb.as_path()));
+			search_media_dir(ms, media_pb.as_path())?;
 		}
 	}
 	Ok(())
@@ -101,12 +101,12 @@ fn search_mod_dir(ms: &mut MediaSet, path: &Path) -> io::Result<()>
 
 fn search_modpack_dir(ms: &mut MediaSet, path: &Path, mods: Option<&ModList>) -> io::Result<()>
 {
-	for entry in try!(path.read_dir()) {
-		let p = try!(entry).path();
+	for entry in path.read_dir()? {
+		let p = entry?.path();
 		if !p.is_dir() {
 			continue;
 		} else if p.join("modpack.txt").exists() {
-			try!(search_modpack_dir(ms, p.as_path(), mods));
+			search_modpack_dir(ms, p.as_path(), mods)?;
 		} else if p.join("init.lua").exists() {
 			if let Some(list) = mods {
 				if !list.contains(&p.file_name().expect("Modpack directory has no file name!")
@@ -115,7 +115,7 @@ fn search_modpack_dir(ms: &mut MediaSet, path: &Path, mods: Option<&ModList>) ->
 					continue;
 				}
 			}
-			try!(search_mod_dir(ms, p.as_path()));
+			search_mod_dir(ms, p.as_path())?;
 		}
 		// Otherwise it's probably a VCS directory or something similar
 	}
@@ -125,11 +125,11 @@ fn search_modpack_dir(ms: &mut MediaSet, path: &Path, mods: Option<&ModList>) ->
 
 fn write_index(ms: &MediaSet, path: &Path) -> io::Result<()>
 {
-	let file = try!(File::create(&path));
+	let file = File::create(&path)?;
 	let mut writer = BufWriter::new(file);
-	try!(writer.write_all(b"MTHS\x00\x01"));
+	writer.write_all(b"MTHS\x00\x01")?;
 	for asset in ms {
-		try!(writer.write_all(&asset.hash));
+		writer.write_all(&asset.hash)?;
 	}
 	Ok(())
 }
@@ -165,7 +165,7 @@ fn copy_assets(ms: &MediaSet, path: &Path, mode: AssetCopyMode) -> io::Result<()
 	};
 
 	for asset in ms {
-		try!(copy_func(&asset.path, path.join(to_hex(&asset.hash))));
+		copy_func(&asset.path, path.join(to_hex(&asset.hash)))?;
 	}
 	Ok(())
 }
