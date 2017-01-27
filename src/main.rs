@@ -7,7 +7,8 @@ use std::fs::{self, File};
 use std::io::{self, Read, Write, BufWriter};
 use std::iter::FromIterator;
 use std::env;
-use ini::{ini as ini2, Ini};
+use ini::Ini;
+use ini::ini::Error as IniError;
 
 
 type Sha1DigestBytes = [u8; 20];
@@ -168,13 +169,9 @@ fn copy_assets(ms: &MediaSet, path: &Path, mode: AssetCopyMode) -> io::Result<()
 }
 
 
-fn get_mod_list(path: &Path) -> Result<ModList, ini2::Error>
+fn get_mod_list(path: &Path) -> Result<ModList, IniError>
 {
-	let world_mt = match Ini::load_from_file(path.join("world.mt")
-			.to_str().expect("World config path is not valid Unicode!")) {
-		Ok(ini) => ini,
-		Err(e) => return Err(e)
-	};
+	let world_mt = Ini::load_from_file(path.join("world.mt"))?;
 	let main_sec = world_mt.general_section();
 
 	let mut list: ModList = vec![];
