@@ -10,9 +10,6 @@ use std::env;
 use ini::{ini as ini2, Ini};
 
 
-const APP_NAME: &'static str = "mt_media_collector";
-
-
 type Sha1DigestBytes = [u8; 20];
 type ModList = Vec<String>;
 type MediaSet = Vec<Asset>;
@@ -199,7 +196,7 @@ fn handle_args() -> Option<getopts::Matches>
 		.and_then(|opt| Path::new(&opt).file_name()
 			.and_then(|os_fn| os_fn.to_str())
 			.and_then(|s| Some(s.to_string()))
-		).unwrap_or(APP_NAME.to_string());
+		).unwrap_or(env!("CARGO_PKG_NAME").to_string());
 
 	let mut opts = getopts::Options::new();
 	opts.optflag("h", "help", "Print this help menu.");
