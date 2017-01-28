@@ -2,8 +2,9 @@
 name = "mt_media_collector"
 version = "0.1.0"
 authors = ["ShadowNinja <shadowninja@minetest.net>"]
+description = "Collects assets for a Minetest HTTP asset server and creates an index.mth file for those assets."
 
 [dependencies]
-sha1 = "*"
+clap = "*"
 rust-ini = "*"
-getopts = "*"
+sha1 = "*"

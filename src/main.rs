@@ -1,8 +1,8 @@
-extern crate getopts;
+#[macro_use] extern crate clap;
 extern crate ini;
 extern crate sha1;
 
-use std::env;
+use std::ffi::{OsStr, OsString};
 use std::fs::{self, File};
 use std::io::{self, Read, Write, BufWriter};
 use std::iter::FromIterator;
@@ -192,53 +192,62 @@ fn get_mod_list(path: &Path) -> Result<ModList, IniError> {
 }
 
 
-fn handle_args() -> Option<getopts::Matches> {
-	let mut args = env::args();
-	let cmd_name = args.next()
-		.and_then(|opt| {
-			Path::new(&opt)
-				.file_name()
-				.and_then(|os_fn| os_fn.to_str())
-				.and_then(|s| Some(s.to_string()))
-		})
-		.unwrap_or(env!("CARGO_PKG_NAME").to_string());
+fn get_args<'a>() -> clap::ArgMatches<'a> {
+	use clap::{App, Arg, ArgGroup};
 
-	let mut opts = getopts::Options::new();
-	opts.optflag("h", "help", "Print this help menu.");
-	opts.reqopt("o", "out", "Path to the output directory.", "PATH");
-	opts.reqopt("w", "world", "Path to the world directory.", "PATH");
-	opts.reqopt("g", "game", "Path to the game directory.", "PATH");
-	opts.optflagopt("c", "copy",
-			"Copy assets to folder. Takes optional copy method: \
-				one of 'symlink', 'hardlink', 'copy' (default)",
-			"METHOD");
-
-	let usage = || {
-		opts.usage(&format!("{} [mod paths]\n\n\
-			Collects assets for a Minetest HTTP asset server and \
-			creates an index.mth file for those assets.",
-			opts.short_usage(cmd_name.as_str())
-		))
-	};
-
-	let matches = match opts.parse(args) {
-		Ok(matches) => matches,
-		Err(fail) => {
-			print!("Error: {}\n\n{}", fail.to_string(), usage());
-			return None;
+	fn check_dir(s: &OsStr) -> Result<(), OsString> {
+		let p = make_absolute(Path::new(&s));
+		if p.is_dir() {
+			return Ok(())
 		}
-	};
-
-	if matches.opt_present("h") {
-		print!("{}", usage());
-		return None;
+		if let Some(parent) = p.parent() {
+			if parent.is_dir() {
+				return Ok(())
+			}
+		}
+		return Err("Invalid path.".into())
 	}
 
-	return Some(matches);
+	let app = clap_app! { @app (app_from_crate!())
+		(version_short: "v")
+
+		(@arg mod_paths: [PATHS] ... validator_os(check_dir) "Additional mod paths to search.")
+
+		(@arg out:   -o --out   <PATH> validator_os(check_dir) "Path to the output directory.")
+		(@arg world: -w --world <PATH> validator_os(check_dir) "Path to the world directory.")
+		(@arg game:  -g --game  <PATH> validator_os(check_dir) "Path to the game directory.")
+
+		// Group these together with display_order
+		(@arg copy: -c --copy display_order(1000) "Copy assets to output folder.")
+		// Symlink added below if applicable
+		(@arg hardlink: -l --hardlink display_order(1000) "Hard link assets to output folder.")
+	};
+
+
+	// Add symlink option if supported
+	#[cfg(not(any(unix, windows)))]
+	let add_symlink_arg = |app| app;
+
+	#[cfg(any(unix, windows))]
+	fn add_symlink_arg<'a>(app: App<'a, 'a>) -> App<'a, 'a> {
+		app.arg(Arg::with_name("symlink")
+			.short("s")
+			.long("symlink")
+			.display_order(1000)
+			.help("Symbolically link assets to output folder."))
+	}
+
+	add_symlink_arg(app)
+		// Link group has to be added manually because the
+		// symlink argument is added conditionally.
+		.group(ArgGroup::with_name("link")
+			.args(&["copy", "symlink", "hardlink"]))
+
+		.get_matches()
 }
 
 
-fn int_main() -> i32 {
+fn run(args: clap::ArgMatches) -> i32 {
 	macro_rules! handle_result {
 		( $x:expr, $m:expr ) => {
 			match $x {
@@ -251,40 +260,24 @@ fn int_main() -> i32 {
 		}
 	}
 
-	let args = match handle_args() {
-		Some(a) => a,
-		None => return 1,
-	};
-
-	let out_opt = args.opt_str("out").unwrap();
+	// These unwraps are safe since the values are required
+	// and clap will exit if the value is missing.
+	let out_opt = args.value_of_os("out").unwrap();
 	let out_path = Path::new(&out_opt);
-	let world_opt = args.opt_str("world").unwrap();
+	let world_opt = args.value_of_os("world").unwrap();
 	let world_path = Path::new(&world_opt);
-	let game_opt = args.opt_str("game").unwrap();
+	let game_opt = args.value_of_os("game").unwrap();
 	let game_path = Path::new(&game_opt);
 
-	let abs_out_path = make_absolute(out_path);
-	let out_parent = abs_out_path.parent();
-	if out_parent.is_some() && !out_parent.unwrap().exists() {
-		println!("Error: Out path parent should exist.");
-		return 1;
-	}
-
-	let copy_type = match args.opt_default("copy", "copy") {
-		None => AssetCopyMode::None,
-		Some(t) => {
-			if t == "symlink" {
-				AssetCopyMode::Symlink
-			} else if t == "hardlink" {
-				AssetCopyMode::Hardlink
-			} else if t == "copy" {
-				AssetCopyMode::Copy
-			} else {
-				println!("Error: Invalid value for copy argument.");
-				return 1;
-			}
-		}
-	};
+	let copy_type = if args.is_present("copy") {
+			AssetCopyMode::Copy
+		} else if args.is_present("symlink") {
+			AssetCopyMode::Symlink
+		} else if args.is_present("hardlink") {
+			AssetCopyMode::Hardlink
+		} else {
+			AssetCopyMode::None
+		};
 
 	let mut ms = MediaSet::new();
 	let mods = handle_result!(get_mod_list(world_path), "Error getting mod list: {}");
@@ -301,9 +294,13 @@ fn int_main() -> i32 {
 	handle_result!(search_modpack_dir(&mut ms, game_path.join("mods").as_path(), None),
 			"Error searching game mods: {}");
 
-	for mod_path in args.free {
-		handle_result!(search_modpack_dir(&mut ms, Path::new(&mod_path), Some(&mods)),
-				"Error searching other mods: {}");
+	if let Some(mod_paths) = args.values_of_os("mod_paths") {
+		for mod_path in mod_paths {
+			handle_result!(search_modpack_dir(&mut ms,
+					Path::new(&mod_path),
+					Some(&mods)),
+					"Error searching other mods: {}");
+		}
 	}
 
 	// Deduplicate list.  Otherwise linking will fail and the index will
@@ -329,5 +326,5 @@ fn main() {
 	// Rust (stable) only supports setting the exit code by calling this
 	// function, but it doesn't do cleanup, so it can't be run until all
 	// resources have already been destroyed.
-	std::process::exit(int_main())
+	std::process::exit(run(get_args()))
 }
