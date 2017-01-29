@@ -195,7 +195,7 @@ fn get_mod_list(path: &Path) -> Result<ModList, IniError> {
 fn get_args<'a>() -> clap::ArgMatches<'a> {
 	use clap::{App, Arg, ArgGroup};
 
-	fn check_dir(s: &OsStr) -> Result<(), OsString> {
+	fn check_new_dir(s: &OsStr) -> Result<(), OsString> {
 		let p = make_absolute(Path::new(&s));
 		if p.is_dir() {
 			return Ok(())
@@ -208,14 +208,22 @@ fn get_args<'a>() -> clap::ArgMatches<'a> {
 		return Err("Invalid path.".into())
 	}
 
+	fn check_existing_dir(s: &OsStr) -> Result<(), OsString> {
+		if make_absolute(Path::new(&s)).is_dir() {
+			Ok(())
+		} else {
+			Err("Invalid path.".into())
+		}
+	}
+
 	let app = clap_app! { @app (app_from_crate!())
 		(version_short: "v")
 
-		(@arg mod_paths: [PATHS] ... validator_os(check_dir) "Additional mod paths to search.")
+		(@arg mod_paths: [PATHS] ... validator_os(check_existing_dir) "Additional mod paths to search.")
 
-		(@arg out:   -o --out   <PATH> validator_os(check_dir) "Path to the output directory.")
-		(@arg world: -w --world <PATH> validator_os(check_dir) "Path to the world directory.")
-		(@arg game:  -g --game  <PATH> validator_os(check_dir) "Path to the game directory.")
+		(@arg out:   -o --out   <PATH> validator_os(check_new_dir) "Path to the output directory.")
+		(@arg world: -w --world <PATH> validator_os(check_existing_dir) "Path to the world directory.")
+		(@arg game:  -g --game  <PATH> validator_os(check_existing_dir) "Path to the game directory.")
 
 		// Group these together with display_order
 		(@arg copy: -c --copy display_order(1000) "Copy assets to output folder.")
