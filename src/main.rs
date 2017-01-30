@@ -3,6 +3,7 @@ extern crate ini;
 extern crate sha1;
 
 use std::ffi::{OsStr, OsString};
+use std::fmt;
 use std::fs::{self, File};
 use std::io::{self, Read, Write, BufWriter};
 use std::iter::FromIterator;
@@ -35,6 +36,29 @@ impl PartialEq for Asset {
 	fn eq(&self, other: &Self) -> bool {
 		self.hash == other.hash
 	}
+}
+
+
+enum Error {
+	Io(io::Error),
+	Ini(IniError),
+}
+
+impl fmt::Display for Error {
+	fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
+		match *self {
+			Error::Io(ref e)  => write!(f, "IO error: {}", e),
+			Error::Ini(ref e) => write!(f, "Settings file error: {}", e),
+		}
+	}
+}
+
+impl From<io::Error> for Error {
+	fn from(e: io::Error) -> Self { Error::Io(e) }
+}
+
+impl From<IniError> for Error {
+	fn from(e: IniError) -> Self { Error::Ini(e) }
 }
 
 
@@ -255,19 +279,7 @@ fn get_args<'a>() -> clap::ArgMatches<'a> {
 }
 
 
-fn run(args: clap::ArgMatches) -> i32 {
-	macro_rules! handle_result {
-		( $x:expr, $m:expr ) => {
-			match $x {
-				Ok(val) => val,
-				Err(e) => {
-					println!($m, e);
-					return 1;
-				}
-			};
-		}
-	}
-
+fn run(args: clap::ArgMatches) -> Result<(), Error> {
 	// These unwraps are safe since the values are required
 	// and clap will exit if the value is missing.
 	let out_opt = args.value_of_os("out").unwrap();
@@ -288,26 +300,23 @@ fn run(args: clap::ArgMatches) -> i32 {
 		};
 
 	let mut ms = MediaSet::new();
-	let mods = handle_result!(get_mod_list(world_path), "Error getting mod list: {}");
+	let mods = get_mod_list(world_path)?;
 
 	// Search world mods.
 	let worldmods_path = world_path.join("worldmods");
 	if worldmods_path.exists() {
-		handle_result!(search_modpack_dir(&mut ms, worldmods_path.as_path(), Some(&mods)),
-				"Error searching world mods: {}");
+		search_modpack_dir(&mut ms, worldmods_path.as_path(), Some(&mods))?;
 	}
 
 	// Search game mods.
 	// Note: Game mods can not currently be disabled.
-	handle_result!(search_modpack_dir(&mut ms, game_path.join("mods").as_path(), None),
-			"Error searching game mods: {}");
+	search_modpack_dir(&mut ms, game_path.join("mods").as_path(), None)?;
 
 	if let Some(mod_paths) = args.values_of_os("mod_paths") {
 		for mod_path in mod_paths {
-			handle_result!(search_modpack_dir(&mut ms,
+			search_modpack_dir(&mut ms,
 					Path::new(&mod_path),
-					Some(&mods)),
-					"Error searching other mods: {}");
+					Some(&mods))?;
 		}
 	}
 
@@ -317,22 +326,23 @@ fn run(args: clap::ArgMatches) -> i32 {
 	ms.dedup();
 
 	if !out_path.exists() {
-		handle_result!(fs::create_dir(out_path), "{}");
+		fs::create_dir(out_path)?;
 	}
 
-	handle_result!(write_index(&ms, out_path.join("index.mth").as_path()),
-			"Error writing asset index: {}");
+	write_index(&ms, out_path.join("index.mth").as_path())?;
 
-	handle_result!(copy_assets(&ms, out_path, copy_type),
-			"Error linking assets: {}");
+	copy_assets(&ms, out_path, copy_type)?;
 
-	0
+	Ok(())
 }
 
 
 fn main() {
-	// Rust (stable) only supports setting the exit code by calling this
-	// function, but it doesn't do cleanup, so it can't be run until all
-	// resources have already been destroyed.
-	std::process::exit(run(get_args()))
+	match run(get_args()) {
+		Ok(()) => return,
+		Err(e) => {
+			println!("{}", e);
+			std::process::exit(1)
+		}
+	}
 }
