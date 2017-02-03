@@ -5,6 +5,6 @@ authors = ["ShadowNinja <shadowninja@minetest.net>"]
 description = "Collects assets for a Minetest HTTP asset server and creates an index.mth file for those assets."
 
 [dependencies]
-clap = "*"
+clap = "^2.20.1"
 rust-ini = "*"
 sha1 = "*"

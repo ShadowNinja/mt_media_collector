@@ -222,24 +222,38 @@ fn get_mod_list(path: &Path) -> Result<ModList, IniError> {
 fn get_args<'a>() -> clap::ArgMatches<'a> {
 	use clap::{App, Arg, ArgGroup};
 
-	fn check_new_dir(s: &OsStr) -> Result<(), OsString> {
-		let p = make_absolute(Path::new(&s));
-		if p.is_dir() {
-			return Ok(())
-		}
+	fn check_parent_dir(p: &Path) -> bool {
 		if let Some(parent) = p.parent() {
 			if parent.is_dir() {
-				return Ok(())
+				return true
 			}
 		}
-		return Err("Invalid path.".into())
+		false
+	}
+
+	fn check_new_dir(s: &OsStr) -> Result<(), OsString> {
+		let p = make_absolute(Path::new(&s));
+		if p.is_dir() || check_parent_dir(&p) {
+			Ok(())
+		} else {
+			Err("Invalid directory path.".into())
+		}
 	}
 
 	fn check_existing_dir(s: &OsStr) -> Result<(), OsString> {
 		if make_absolute(Path::new(&s)).is_dir() {
 			Ok(())
 		} else {
-			Err("Invalid path.".into())
+			Err("Invalid directory path.".into())
+		}
+	}
+
+	fn check_new_file(s: &OsStr) -> Result<(), OsString> {
+		let p = make_absolute(Path::new(&s));
+		if p.is_file() || check_parent_dir(&p) {
+			Ok(())
+		} else {
+			Err("Invalid file path.".into())
 		}
 	}
 
@@ -248,16 +262,26 @@ fn get_args<'a>() -> clap::ArgMatches<'a> {
 
 		(@arg mod_paths: [PATHS] ... validator_os(check_existing_dir) "Additional mod paths to search.")
 
-		(@arg out:   -o --out   <PATH> validator_os(check_new_dir) "Path to the output directory.")
 		(@arg world: -w --world <PATH> validator_os(check_existing_dir) "Path to the world directory.")
 		(@arg game:  -g --game  <PATH> validator_os(check_existing_dir) "Path to the game directory.")
 
-		// Group these together with display_order
-		(@arg copy: -c --copy display_order(1000) "Copy assets to output folder.")
-		// Symlink added below if applicable
-		(@arg hardlink: -l --hardlink display_order(1000) "Hard link assets to output folder.")
-	};
+		(@group output =>
+			(@attributes +multiple +required)
+			(@arg out: -o --out [PATH] validator_os(check_new_dir) display_order(1001)
+				conflicts_with_all(&["media", "index"])
+				"Directory to output media files and index. \
+				Convenience for --index PATH/index.mth --media PATH.")
+			(@arg media: -m --media [PATH] validator_os(check_new_dir) display_order(1001)
+				requires("media_transfer")
+				"Directory to output media files.")
+			(@arg index: -i --index [PATH] validator_os(check_new_file) display_order(1001)
+				"Path to the index file to output."))
 
+		// Group these together with display_order
+		(@arg copy: -c --copy display_order(1000) requires("media_out") "Copy assets to output folder.")
+		// Symlink added below if applicable
+		(@arg hardlink: -l --hardlink display_order(1000) requires("media_out") "Hard link assets to output folder.")
+	};
 
 	// Add symlink option if supported
 	#[cfg(not(any(unix, windows)))]
@@ -269,28 +293,47 @@ fn get_args<'a>() -> clap::ArgMatches<'a> {
 			.short("s")
 			.long("symlink")
 			.display_order(1000)
+			.requires("media_out")
 			.help("Symbolically link assets to output folder."))
 	}
 
-	add_symlink_arg(app)
-		// Link group has to be added manually because the
-		// symlink argument is added conditionally.
-		.group(ArgGroup::with_name("link")
+	let matches = add_symlink_arg(app)
+		.group(ArgGroup::with_name("media_out")
+			.args(&["out", "media"]))
+		.group(ArgGroup::with_name("media_transfer")
 			.args(&["copy", "symlink", "hardlink"]))
+		.get_matches();
 
-		.get_matches()
+	matches
 }
 
 
 fn run(args: clap::ArgMatches) -> Result<(), Error> {
 	// These unwraps are safe since the values are required
 	// and clap will exit if the value is missing.
-	let out_opt = args.value_of_os("out").unwrap();
-	let out_path = Path::new(&out_opt);
 	let world_opt = args.value_of_os("world").unwrap();
 	let world_path = Path::new(&world_opt);
+
 	let game_opt = args.value_of_os("game").unwrap();
 	let game_path = Path::new(&game_opt);
+
+	let out_path = args.value_of_os("out").map(|s| PathBuf::from(s));
+
+	let media_path = if let Some(media_opt) = args.value_of_os("media") {
+			Some(PathBuf::from(media_opt))
+		} else if let Some(ref out_path) = out_path {
+			Some(out_path.clone())
+		} else {
+			None
+		};
+
+	let index_path = if let Some(index_opt) = args.value_of_os("index") {
+			Some(PathBuf::from(index_opt))
+		} else if let Some(ref out_path) = out_path {
+			Some(out_path.join("index.mth"))
+		} else {
+			None
+		};
 
 	let copy_type = if args.is_present("copy") {
 			AssetCopyMode::Copy
@@ -328,13 +371,17 @@ fn run(args: clap::ArgMatches) -> Result<(), Error> {
 	ms.sort_by(|a, b| a.hash.cmp(&b.hash));
 	ms.dedup();
 
-	if !out_path.exists() {
-		fs::create_dir(out_path)?;
+	if let Some(media_path) = media_path {
+		if !media_path.exists() {
+			fs::create_dir(media_path.as_path())?;
+		}
+
+		copy_assets(&ms, media_path.as_path(), copy_type)?;
 	}
 
-	write_index(&ms, out_path.join("index.mth").as_path())?;
-
-	copy_assets(&ms, out_path, copy_type)?;
+	if let Some(index_path) = index_path {
+		write_index(&ms, index_path.as_path())?;
+	}
 
 	Ok(())
 }
