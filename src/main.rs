@@ -194,7 +194,10 @@ fn copy_assets(ms: &MediaSet, path: &Path, mode: AssetCopyMode) -> io::Result<()
 	};
 
 	for asset in ms {
-		copy_func(&asset.path, path.join(to_hex(&asset.hash)))?;
+		let to_path = path.join(to_hex(&asset.hash));
+		if !to_path.exists() {
+			copy_func(&asset.path, to_path)?;
+		}
 	}
 	Ok(())
 }
