@@ -32,12 +32,6 @@ impl Asset {
 	}
 }
 
-impl PartialEq for Asset {
-	fn eq(&self, other: &Self) -> bool {
-		self.hash == other.hash
-	}
-}
-
 
 enum Error {
 	Io(io::Error),
@@ -368,8 +362,8 @@ fn run(args: clap::ArgMatches) -> Result<(), Error> {
 
 	// Deduplicate list.  Otherwise linking will fail and the index will
 	// be unnecessarily large.
-	ms.sort_by(|a, b| a.hash.cmp(&b.hash));
-	ms.dedup();
+	ms.sort_by_key(|a| a.hash);
+	ms.dedup_by_key(|a| a.hash);
 
 	if let Some(media_path) = media_path {
 		if !media_path.exists() {
